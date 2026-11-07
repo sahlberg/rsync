@@ -1703,6 +1703,11 @@ static void sigusr2_handler(UNUSED(int val))
 
 void receive_sigusr2(void)
 {
+	/* The receiver child _exit()s below, so this is its only chance to
+	 * snapshot the destination era and store it.  The generator's own
+	 * exit stamps files that were not rewritten. */
+	if (am_receiver)
+		era_cleanup();
 	if (!am_server)
 		output_summary();
 	close_all();

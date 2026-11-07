@@ -50,6 +50,7 @@ extern int remove_source_files;
 extern int updating_basis_file;
 extern int make_backups;
 extern int inplace;
+extern int era_mode;
 extern int inplace_partial;
 extern int batch_fd;
 extern char *module_dir;
@@ -345,7 +346,7 @@ static int sender_open_copylinks_confined(const char *anchor, const char *relpat
  **/
 static struct sum_struct *receive_sums(int f)
 {
-	struct sum_struct *s = new(struct sum_struct);
+	struct sum_struct *s = new0(struct sum_struct);
 	int lull_mod = protocol_version >= 31 ? 0 : allowed_lull * 5;
 	OFF_T offset = 0;
 	int32 i;
@@ -353,6 +354,34 @@ static struct sum_struct *receive_sums(int f)
 	read_sum_head(f, s);
 
 	s->sums = NULL;
+
+	if (IS_ERA_REQUEST(s)) {
+		OFF_T prev = 0;
+
+		if (read_vstring(f, s->era_state, sizeof s->era_state) < 0)
+			exit_cleanup(RERR_PROTOCOL);
+		if (protocol_version < PROTOCOL_VERSION)
+			return s;
+		i = read_varint(f);
+		if (i < 0 || i > ERA_RANGES_MAX) {
+			rprintf(FERROR, "Invalid --era destination range count %ld\n", (long)i);
+			exit_cleanup(RERR_PROTOCOL);
+		}
+		while (i-- > 0) {
+			OFF_T off = read_varlong(f, 3);
+			OFF_T len = read_varlong(f, 3);
+
+			if (off < 0 || len <= 0 || off > INT64_MAX - len
+			 || (s->era_dest.n && off < prev)) {
+				rprintf(FERROR, "Invalid --era destination range %s + %s\n",
+					big_num(off), big_num(len));
+				exit_cleanup(RERR_PROTOCOL);
+			}
+			prev = off;
+			era_add_range(&s->era_dest, off, len);
+		}
+		return s;
+	}
 
 	if (DEBUG_GTE(DELTASUM, 3)) {
 		rprintf(FINFO, "count=%s n=%ld rem=%ld\n",
@@ -509,13 +538,20 @@ void send_files(int f_in, int f_out)
 	enum logcode log_code = log_before_transfer ? FLOG : FINFO;
 	int f_xfer = write_batch < 0 ? batch_fd : f_out;
 	int save_io_error = io_error;
-	int ndx, j;
+	int ndx, j, era_ok, era_mtime_ok;
+	struct era_ranges era_dirty;
+	char era_state[ERA_STATE_LEN];
+
+	memset(&era_dirty, 0, sizeof era_dirty);
 
 	if (DEBUG_GTE(SEND, 1))
 		rprintf(FINFO, "send_files starting\n");
 
 	if (whole_file < 0)
 		whole_file = 0;
+
+	if (era_mode)
+		era_check();
 
 	progress_init();
 
@@ -773,8 +809,52 @@ void send_files(int f_in, int f_out)
 				path,slash,fname, big_num(st.st_size));
 		}
 
+		era_ok = 0;
+		if (IS_ERA_REQUEST(s)) {
+			uint32 mod_nsec = 0;
+			const char *why;
+#ifdef ST_MTIME_NSEC
+			if (NSEC_BUMP(file))
+				mod_nsec = F_MOD_NSEC(file);
+#endif
+			why = era_file_ranges(fd, &st, file->modtime, mod_nsec,
+					      s->era_state, &era_dirty, era_state, &era_mtime_ok);
+			if (!why && s->era_dest.n)
+				era_merge_ranges(&era_dirty, &s->era_dest, st.st_size);
+			if (!why) {
+				era_ok = 1;
+				if (!era_mtime_ok && INFO_GTE(MISC, 2))
+					rprintf(FINFO, "--era: %s%s%s: modified around the era snapshot; "
+						"giving the destination an earlier mtime, so the next "
+						"run sends it again\n", path, slash, fname);
+			} else if (INFO_GTE(MISC, 2))
+				rprintf(FINFO, "--era: %s%s%s: %s; using the normal algorithm\n",
+					path, slash, fname, why);
+		}
+
 		write_ndx_and_attrs(f_out, ndx, iflags, fname, file, fnamecmp_type, xname, xlen);
 		write_sum_head(f_xfer, s);
+
+		if (IS_ERA_REQUEST(s)) {
+			/* 0: declined, the receiver asks for a normal redo.
+			 * 1: era stream.  2: era stream, don't set the mtime. */
+			write_byte(f_xfer, !era_ok ? 0 : era_mtime_ok ? 1 : 2);
+			if (!era_ok) {
+				if (mbuf)
+					unmap_file(mbuf);
+				close(fd);
+				era_free_ranges(&era_dirty);
+				free_sums(s);
+				file->flags |= FLAG_FILE_SENT;
+				continue;
+			}
+		}
+		if (era_mode) {
+			/* What the receiver records once the file is complete. */
+			if (!era_ok)
+				era_sync_state(fd, &st, era_state);
+			write_vstring(f_xfer, era_state, strlen(era_state));
+		}
 
 		if (DEBUG_GTE(DELTASUM, 2))
 			rprintf(FINFO, "calling match_sums %s%s%s\n", path,slash,fname);
@@ -786,7 +866,10 @@ void send_files(int f_in, int f_out)
 
 		set_compression(fname);
 
-		match_sums(f_xfer, s, mbuf, st.st_size);
+		if (era_ok)
+			era_send_file(f_xfer, s, mbuf, st.st_size, &era_dirty);
+		else
+			match_sums(f_xfer, s, mbuf, st.st_size);
 		if (INFO_GTE(PROGRESS, 1))
 			end_progress(st.st_size);
 		else if (want_progress_now)
@@ -805,6 +888,7 @@ void send_files(int f_in, int f_out)
 		}
 		close(fd);
 
+		era_free_ranges(&era_dirty);
 		free_sums(s);
 
 		if (DEBUG_GTE(SEND, 1))
@@ -823,6 +907,7 @@ void send_files(int f_in, int f_out)
 		rprintf(FINFO, "send files finished\n");
 
 	clear_sender_source_roots();
+	era_free_ranges(&era_dirty);
 	match_report();
 
 	write_ndx(f_out, NDX_DONE);

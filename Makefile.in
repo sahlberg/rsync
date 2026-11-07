@@ -49,7 +49,7 @@ OBJS1_NO_MAIN=flist.o rsync.o generator.o receiver.o cleanup.o sender.o exclude.
 OBJS1=$(OBJS1_NO_MAIN) main.o
 OBJS2=options.o io.o compat.o hlink.o token.o uidlist.o socket.o hashtable.o \
 	usage.o fileio.o batch.o clientname.o chmod.o acls.o xattrs.o
-OBJS3=progress.o pipe.o niceness.o @MD5_ASM@ @ROLL_SIMD@ @ROLL_ASM@
+OBJS3=progress.o pipe.o niceness.o era.o @MD5_ASM@ @ROLL_SIMD@ @ROLL_ASM@
 DAEMON_OBJ = params.o loadparm.o clientserver.o access.o connection.o authenticate.o
 popt_OBJS= popt/popt.o  popt/poptconfig.o \
 	popt/popthelp.o popt/poptparse.o popt/poptint.o
@@ -57,8 +57,11 @@ OBJS=$(OBJS1) $(OBJS2) $(OBJS3) $(DAEMON_OBJ) $(LIBOBJ) @BUILD_ZLIB@ @BUILD_POPT
 
 TLS_OBJ = tls.o syscall.o util2.o t_stub.o lib/compat.o lib/snprintf.o lib/permstring.o lib/sysxattrs.o @BUILD_POPT@
 
+# This fork's executable, so the build and install do not replace upstream rsync.
+RSYNC_PROG = rsync-era$(EXEEXT)
+
 # Programs we must have to run the test cases
-CHECK_PROGS = rsync$(EXEEXT) tls$(EXEEXT) getgroups$(EXEEXT) getfsdev$(EXEEXT) \
+CHECK_PROGS = $(RSYNC_PROG) tls$(EXEEXT) getgroups$(EXEEXT) getfsdev$(EXEEXT) \
 	testrun$(EXEEXT) trimslash$(EXEEXT) t_unsafe$(EXEEXT) t_chmod_secure$(EXEEXT) \
 	t_rename_secure$(EXEEXT) t_symlink_secure$(EXEEXT) t_secure_relpath$(EXEEXT) t_acl$(EXEEXT) t_hashtable_overflow$(EXEEXT) t_iwildmatch$(EXEEXT) t_clean_fname$(EXEEXT) t_safe_arg$(EXEEXT) wildtest$(EXEEXT) simdtest$(EXEEXT)
 
@@ -82,7 +85,7 @@ CHECK_COMPILE_OBJS=syscall-no-at-fdcwd.o access-no-inet6.o
 
 # NOTE: consider running "packaging/smart-make" instead of "make" to auto-handle
 # any changes to configure.sh and the main Makefile prior to a "make all".
-all: Makefile rsync$(EXEEXT) stunnel-rsyncd.conf @MAKE_RRSYNC@ @MAKE_MAN@
+all: Makefile $(RSYNC_PROG) stunnel-rsyncd.conf @MAKE_RRSYNC@ @MAKE_MAN@
 .PHONY: all
 
 syscall-no-at-fdcwd.o: syscall.c $(HEADERS)
@@ -127,7 +130,7 @@ access-no-inet6.o: access.c $(HEADERS)
 .PHONY: install
 install: all
 	-$(MKDIR_P) $(DESTDIR)$(bindir)
-	$(INSTALLCMD) $(INSTALL_STRIP) -m 755 rsync$(EXEEXT) $(DESTDIR)$(bindir)
+	$(INSTALLCMD) $(INSTALL_STRIP) -m 755 $(RSYNC_PROG) $(DESTDIR)$(bindir)
 	$(INSTALLCMD) -m 755 $(srcdir)/rsync-ssl $(DESTDIR)$(bindir)
 	-$(MKDIR_P) $(DESTDIR)$(mandir)/man1
 	-$(MKDIR_P) $(DESTDIR)$(mandir)/man5
@@ -157,11 +160,11 @@ install-all: install install-ssl-daemon
 
 install-strip:
 	$(MAKE) install
-	$(STRIP) $(DESTDIR)$(bindir)/rsync$(EXEEXT)
+	$(STRIP) $(DESTDIR)$(bindir)/$(RSYNC_PROG)
 
 .PHONY: uninstall
 uninstall:
-	rm -f $(DESTDIR)$(bindir)/rsync$(EXEEXT) $(DESTDIR)$(bindir)/rsync-ssl
+	rm -f $(DESTDIR)$(bindir)/$(RSYNC_PROG) $(DESTDIR)$(bindir)/rsync-ssl
 	rm -f $(DESTDIR)$(bindir)/rrsync
 	rm -f $(DESTDIR)$(mandir)/man1/rsync.1 $(DESTDIR)$(mandir)/man1/rsync-ssl.1
 	rm -f $(DESTDIR)$(mandir)/man1/rrsync.1
@@ -174,7 +177,7 @@ uninstall-ssl-daemon:
 .PHONY: uninstall-all
 uninstall-all: uninstall uninstall-ssl-daemon
 
-rsync$(EXEEXT): $(OBJS)
+$(RSYNC_PROG): $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJS) $(LIBS)
 
 rrsync: support/rrsync
@@ -482,15 +485,15 @@ check-progs: all $(CHECK_PROGS) $(CHECK_COMPILE_OBJS) $(CHECK_SYMLINKS)
 
 .PHONY: check
 check: all $(CHECK_PROGS) $(CHECK_COMPILE_OBJS) $(CHECK_SYMLINKS)
-	"$(srcdir)/runtests.py" --rsync-bin="`pwd`/rsync$(EXEEXT)" -j $(CHECK_J)
+	"$(srcdir)/runtests.py" --rsync-bin="`pwd`/$(RSYNC_PROG)" -j $(CHECK_J)
 
 .PHONY: check29
 check29: all $(CHECK_PROGS) $(CHECK_COMPILE_OBJS) $(CHECK_SYMLINKS)
-	"$(srcdir)/runtests.py" --rsync-bin="`pwd`/rsync$(EXEEXT)" -j $(CHECK_J) --protocol=29
+	"$(srcdir)/runtests.py" --rsync-bin="`pwd`/$(RSYNC_PROG)" -j $(CHECK_J) --protocol=29
 
 .PHONY: check30
 check30: all $(CHECK_PROGS) $(CHECK_COMPILE_OBJS) $(CHECK_SYMLINKS)
-	"$(srcdir)/runtests.py" --rsync-bin="`pwd`/rsync$(EXEEXT)" -j $(CHECK_J) --protocol=30
+	"$(srcdir)/runtests.py" --rsync-bin="`pwd`/$(RSYNC_PROG)" -j $(CHECK_J) --protocol=30
 
 # Whole-suite gcov coverage report (HTML, with branch + decision coverage).
 # Requires a build configured with --enable-coverage and the `gcovr` tool
@@ -518,7 +521,7 @@ coverage: all $(CHECK_PROGS) $(CHECK_SYMLINKS)
 	    chmod a+rwx "$$d"; \
 	    setfacl -m 'd:u::rwx,d:g::rwx,d:o::rwx' "$$d" 2>/dev/null || true; \
 	  done
-	@rc=0; "$(srcdir)/runtests.py" --rsync-bin="`pwd`/rsync$(EXEEXT)" -j $(COVERAGE_J) $(COVERAGE_RUNFLAGS) || rc=$$?; \
+	@rc=0; "$(srcdir)/runtests.py" --rsync-bin="`pwd`/$(RSYNC_PROG)" -j $(COVERAGE_J) $(COVERAGE_RUNFLAGS) || rc=$$?; \
 	  rm -rf $(COVERAGE_DIR) && mkdir -p $(COVERAGE_DIR); \
 	  gcovr --root $(srcdir) $(COVERAGE_EXCLUDE) --decisions --print-summary \
 	      --gcov-ignore-parse-errors=negative_hits.warn_once_per_file \
@@ -558,7 +561,7 @@ coverage-all: all $(CHECK_PROGS) $(CHECK_SYMLINKS)
 	@rc=0; \
 	  for cfg in '' '--protocol=30' '--protocol=29' '--use-tcp'; do \
 	    echo "===== coverage-all: runtests.py $$cfg ====="; \
-	    "$(srcdir)/runtests.py" --rsync-bin="`pwd`/rsync$(EXEEXT)" -j $(COVERAGE_J) $$cfg || rc=$$?; \
+	    "$(srcdir)/runtests.py" --rsync-bin="`pwd`/$(RSYNC_PROG)" -j $(COVERAGE_J) $$cfg || rc=$$?; \
 	  done; \
 	  rm -rf coverage-all && mkdir -p coverage-all; \
 	  gcovr --root $(srcdir) $(COVERAGE_EXCLUDE) --decisions --print-summary \
@@ -607,7 +610,7 @@ testsuite/exclude-lsh_test.py:
 
 .PHONY: installcheck
 installcheck: $(CHECK_PROGS) $(CHECK_SYMLINKS)
-	"$(srcdir)/runtests.py" --rsync-bin="$(bindir)/rsync$(EXEEXT)" --srcdir="$(srcdir)" --tooldir="`pwd`" -j $(CHECK_J)
+	"$(srcdir)/runtests.py" --rsync-bin="$(bindir)/$(RSYNC_PROG)" --srcdir="$(srcdir)" --tooldir="`pwd`" -j $(CHECK_J)
 
 # TODO: Add 'dist' target; need to know which files will be included
 

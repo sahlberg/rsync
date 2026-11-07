@@ -47,6 +47,12 @@
   Solaris 10.
 
 ### ENHANCEMENTS:
+- `--era` now records a destination-device era beside the source era in
+  `user.rsync.era`. On a vault copy that also sits on dm-era, a later write
+  by some other process is detected even when size and mtime still match,
+  and those bytes are sent again from the source. The receiver must run as
+  root and be this version. An older sender repairs such a file with
+  checksums.
 - Added `--nice` to adjust CPU and I/O scheduling priorities for local and
   remote rsync processes. Daemon clients and rrsync cannot raise server-side
   priorities.

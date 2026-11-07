@@ -66,6 +66,7 @@ extern int ignore_non_existing;
 extern int want_xattr_optim;
 extern int modify_window;
 extern int inplace;
+extern int era_mode;
 extern int append_mode;
 extern int make_backups;
 extern int csum_length;
@@ -869,6 +870,58 @@ static int generate_and_send_sums(int fd, OFF_T len, int f_out, int f_copy)
 }
 
 
+/*
+ * --era: instead of checksums, send a sum head with no strong sums (the
+ * block layout the sender may refer to) followed by the destination's
+ * ERA_XATTR and, when both sides speak this protocol, the byte ranges the
+ * destination itself has written.  The sender unions those with the source
+ * ranges and refers to unchanged blocks, so the destination file never has
+ * to be read.  Without the xattr there is nothing to go on, so the file
+ * uses normal sums.  A destination range list with an older peer also uses
+ * normal sums: that peer would ignore the ranges and a later destination
+ * stamp would hide the change.
+ */
+static int send_era_request(int f_out, const char *fname, STRUCT_STAT *st,
+			    struct era_ranges *dest)
+{
+	/* Block references cost nothing to compute, and holes and unwritten
+	 * extents are always sent, rounded out to whole blocks, so use small
+	 * blocks rather than sum_sizes_sqroot()'s. */
+	const int32 blength = 16384;
+	struct sum_struct sum;
+	char state[ERA_STATE_LEN];
+	int64 count = (st->st_size + blength - 1) / blength;
+	int i, n;
+
+	if (dest && dest->n > 0 && protocol_version < PROTOCOL_VERSION)
+		return -1;
+	if (count <= 0 || count > MAX_INT32 || era_get_state(fname, state) < 0)
+		return -1;
+	memset(&sum, 0, sizeof sum);
+	sum.flength = st->st_size;
+	sum.blength = blength;
+	sum.remainder = (int32)(st->st_size % blength);
+	sum.count = (int32)count;
+	sum.s2length = 0;
+	write_sum_head(f_out, &sum);
+	write_vstring(f_out, state, strlen(state));
+	if (protocol_version >= PROTOCOL_VERSION) {
+		n = dest ? dest->n : 0;
+		if (n > ERA_RANGES_MAX) {
+			write_varint(f_out, 1);
+			write_varlong(f_out, 0, 3);
+			write_varlong(f_out, st->st_size, 3);
+		} else {
+			write_varint(f_out, n);
+			for (i = 0; i < n; i++) {
+				write_varlong(f_out, dest->off[i], 3);
+				write_varlong(f_out, dest->len[i], 3);
+			}
+		}
+	}
+	return 0;
+}
+
 /* Try to find a filename in the same dir as "fname" with a similar name. */
 static struct file_struct *find_fuzzy(struct file_struct *file, struct file_list *dirlist_array[], uchar *fnamecmp_type_ptr)
 {
@@ -1395,6 +1448,7 @@ static void list_file_entry(struct file_struct *f)
 }
 
 static int phase = 0;
+static int redoing = 0; /* a redo can come while phase is still 0 */
 static int dflt_perms;
 
 static int implied_dirs_are_missing;
@@ -1656,6 +1710,7 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 	static int need_fuzzy_dirlist = 0;
 	struct file_struct *fuzzy_file = NULL;
 	int fd = -1, f_copy = -1;
+	struct era_ranges dest_dirty = {0};
 	stat_x sx = {0}, real_sx = {0};
 	STRUCT_STAT partial_st;
 	struct file_struct *back_file = NULL;
@@ -2271,11 +2326,22 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 			real_sx.st.st_size = sx.st.st_size = get_device_size(fd, fnamecmp);
 	}
 
+	/* A matching size and mtime still has to be sent when something other
+	 * than rsync wrote the destination copy.  Skipped when this run will
+	 * not write: the check snapshots the destination era device. */
+	if (era_mode && do_xfers && !phase && !redoing
+	 && fnamecmp_type == FNAMECMP_FNAME && S_ISREG(sx.st.st_mode))
+		era_dest_ranges(fnamecmp, &sx.st, &dest_dirty);
+
 	if (fnamecmp_type <= FNAMECMP_BASIS_DIR_HIGH)
 		;
 	else if (fnamecmp_type >= FNAMECMP_FUZZY)
 		;
-	else if (quick_check_ok(FT_REG, fnamecmp, file, &sx.st)) {
+	else if (dest_dirty.n == 0 && quick_check_ok(FT_REG, fnamecmp, file, &sx.st)) {
+		/* Still in sync. Record a destination era if this file does not
+		 * have one yet, so the next run can see a later destination write. */
+		if (era_mode && do_xfers && !phase && !redoing && fnamecmp_type == FNAMECMP_FNAME)
+			era_arm_dest(fnamecmp, &sx.st);
 		if (partialptr) {
 			/* The --partial-dir basis is an operator/peer path: unlink it
 			 * through the exclude-aware ownership walk so a symlinked
@@ -2444,6 +2510,9 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 		write_sum_head(f_out, NULL);
 	else if (sx.st.st_size <= 0) {
 		write_sum_head(f_out, NULL);
+	} else if (era_mode && !phase && !redoing && fnamecmp_type == FNAMECMP_FNAME && f_copy < 0
+		&& send_era_request(f_out, fname, &sx.st, &dest_dirty) == 0) {
+		/* The sender may decline; the file is then redone normally. */
 	} else {
 		if (generate_and_send_sums(fd, sx.st.st_size, f_out, f_copy) < 0) {
 			rprintf(FWARNING,
@@ -2497,6 +2566,7 @@ static void recv_generator(char *fname, struct file_struct *file, int ndx,
 
 	free_stat_x(&sx);
 	free_stat_x(&real_sx);
+	era_free_ranges(&dest_dirty);
 }
 
 /* If we are replacing an existing hard link, symlink, device, or special file,
@@ -2713,7 +2783,9 @@ void check_for_finished_files(int itemizing, enum logcode code, int check_redo)
 				strlcpy(fbuf, solo_file, sizeof fbuf);
 			else
 				f_name(file, fbuf);
+			redoing = 1;
 			recv_generator(fbuf, file, ndx, itemizing, code, sock_f_out);
+			redoing = 0;
 			cur_flist->to_redo--;
 
 			cur_flist = flist;

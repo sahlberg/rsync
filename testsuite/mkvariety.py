@@ -30,7 +30,7 @@ def _resolve_rsync(opt):
     """Find an rsync binary to probe xattr/ACL capability with."""
     if opt:
         return os.path.abspath(opt)
-    cand = os.path.join(os.path.dirname(_HERE), 'rsync')   # build-tree ./rsync
+    cand = os.path.join(os.path.dirname(_HERE), 'rsync-era')   # build-tree ./rsync-era
     if os.path.exists(cand):
         return cand
     from shutil import which
@@ -67,7 +67,7 @@ def main():
                     help='int seed for the fixed choices (default 0x5A17)')
     ap.add_argument('--rsync', default=None,
                     help='rsync binary for xattr/ACL capability probes '
-                         '(default: ./rsync in the build tree, else PATH rsync)')
+                         '(default: ./rsync-era in the build tree, else PATH rsync)')
     ap.add_argument('--list', action='store_true',
                     help='print a recursive listing of the tree afterwards')
     for cap, helptext in (('xattrs', 'user xattrs'), ('acls', 'POSIX ACLs'),

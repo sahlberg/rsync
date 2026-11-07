@@ -456,6 +456,7 @@ void free_sums(struct sum_struct *s)
 		free(s->sums);
 		free(s->sum2_array);
 	}
+	era_free_ranges(&s->era_dest);
 	free(s);
 }
 

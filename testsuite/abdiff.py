@@ -2,7 +2,7 @@
 """abdiff.py -- differential A/B regression hunter for rsync.
 
 Runs the same transfer with two rsync binaries (A = the build under test, e.g.
-./rsync; B = a baseline, e.g. old_versions/rsync_3.4.1) and compares the
+./rsync-era; B = a baseline, e.g. old_versions/rsync_3.4.1) and compares the
 OUTCOME: exit code, error output, --stats "Literal data", the destination tree
 (content + full metadata), and the --itemize change list.
 
@@ -16,7 +16,7 @@ imports nothing from the test harness).  Findings are printed and appended to a
 log; minimize each into a testsuite/*_test.py.
 
 Usage:
-    testsuite/abdiff.py [--rsync-a ./rsync] [--rsync-b old_versions/rsync_3.4.1]
+    testsuite/abdiff.py [--rsync-a ./rsync-era] [--rsync-b old_versions/rsync_3.4.1]
                       [--sweep options|pathshape|all] [--workdir DIR] [--keep]
                       [--findings abdiff-findings.txt] [--only NAME] [--list]
 Exit 0 iff no regression candidates were found.
@@ -43,7 +43,7 @@ from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # config / globals (set in main)
-RSYNC_A = "./rsync"
+RSYNC_A = "./rsync-era"
 RSYNC_B = "old_versions/rsync_3.4.1"
 RRSYNC_A = None     # rrsync wrapper paired with A/B (None -> in-tree support/rrsync)
 RRSYNC_B = None
@@ -2550,7 +2550,7 @@ class _Tee:
 def main():
     global RSYNC_A, RSYNC_B, RRSYNC_A, RRSYNC_B, KEEP, REPEAT, CMD_TIMEOUT, COST, SCALE_N
     ap = argparse.ArgumentParser()
-    ap.add_argument("--rsync-a", default="./rsync")
+    ap.add_argument("--rsync-a", default="./rsync-era")
     ap.add_argument("--rsync-b", default="old_versions/rsync_3.4.1")
     ap.add_argument("--rrsync-a", default=None,
                     help="rrsync wrapper script paired with A for the rrsync lane "

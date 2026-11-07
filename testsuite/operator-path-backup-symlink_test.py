@@ -56,7 +56,7 @@ def build():
 def push():
     """Runs a blocking local rsync push invocation."""
     return subprocess.run(
-        ['./rsync', '-a', '-b', f'--backup-dir={backup}',
+        ['./rsync-era', '-a', '-b', f'--backup-dir={backup}',
          f'{src}/', f'{dest}/'],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )

@@ -49,13 +49,13 @@ prefer clarity over cleverness:
 Run from the build directory:
 
 - **`make check`** — build the helper programs and run the whole suite in
-  parallel (`CHECK_J`, default 8) against the just-built `./rsync`. You do **not**
+  parallel (`CHECK_J`, default 8) against the just-built `./rsync-era`. You do **not**
   need `make install` first; indeed you generally should not install before
   testing. Use `make check CHECK_J=1` to run serially.
 - **`make check29`** / **`make check30`** — the same, forcing protocol version 29
   or 30.
 - **`make installcheck`** — run the suite against the *installed* binary (e.g.
-  `/usr/local/bin/rsync`). Per the GNU standards this does not search `$PATH`.
+  `/usr/local/bin/rsync-era`). Per the GNU standards this does not search `$PATH`.
   Handy for testing a distribution build.
 - **`make check-progs`** — (re)build just the C helper programs the tests need,
   without running anything.
@@ -66,7 +66,7 @@ Run from the build directory:
 ### Via runtests.py directly
 
 `make check` just drives `runtests.py`; run it directly for finer control. It
-defaults `--rsync-bin` to `./rsync`, so run it from the build directory (or pass
+defaults `--rsync-bin` to `./rsync-era`, so run it from the build directory (or pass
 `--rsync-bin` / `--tooldir`):
 
 ```sh
@@ -271,10 +271,10 @@ functional comparison misses). A **stability gate** runs each binary several
 times and escalates on a candidate diff; nondeterministic scenarios are
 quarantined `FLAKY`, never reported as regressions.
 
-Run it from the build directory (so `./rsync` and `old_versions/` resolve):
+Run it from the build directory (so `./rsync-era` and `old_versions/` resolve):
 
 ```sh
-testsuite/abdiff.py                       # default: ./rsync vs old_versions/rsync_3.4.1
+testsuite/abdiff.py                       # default: ./rsync-era vs old_versions/rsync_3.4.1
 testsuite/abdiff.py --sweep all -j5       # broad single pass, 5-way parallel
 testsuite/abdiff.py --loop --timelimit 3600 --cost   # hunt for an hour, resource oracle on
 testsuite/abdiff.py --list --sweep all    # list scenarios without running

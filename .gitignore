@@ -34,6 +34,7 @@ __pycache__
 /gists
 /gmon.out
 /rsync
+/rsync-era
 /stunnel-rsyncd.conf
 /shconfig
 /git-version.h

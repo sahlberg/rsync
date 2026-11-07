@@ -126,7 +126,10 @@
  * All older protocol versions MUST be compatible with the final, official
  * release of the protocol, so don't tweak the code to change the protocol
  * behavior for an older protocol version. */
-#define SUBPROTOCOL_VERSION 0
+/* Unofficial: --era sends destination-dirty byte ranges after the era
+ * state. A peer with a different subprotocol negotiates the previous
+ * protocol, and a dirty vault copy is then repaired with checksums. */
+#define SUBPROTOCOL_VERSION 58217
 
 /* We refuse to interoperate with versions that are not in this range.
  * Note that we assume we'll work with later versions: the onus is on
@@ -1020,6 +1023,27 @@ struct sum_buf {
 	short flags;		/**< flag bits */
 };
 
+/* --era needs dm-era, which only standard Linux has (Android does not). */
+#if defined __linux__ && !defined __ANDROID__
+#define SUPPORT_ERA 1
+#endif
+
+/* --era xattr on each destination file: "<era> <time> <device-id>" for the
+ * source, then the same triple for the destination era device. The source
+ * record selects source blocks written since that era. The destination
+ * record is the era after which a write on the destination device means
+ * something other than rsync changed the copy. An older xattr has only the
+ * source record; destination checking starts once a run has stored one. */
+#define ERA_XATTR "user.rsync.era"
+#define ERA_STATE_LEN 672	/* two "<era> <time> <device-id>" records */
+#define ERA_RANGES_MAX 1048576	/* above this, one range covers the file */
+
+/* Byte ranges of a file that --era says may have changed (sorted). */
+struct era_ranges {
+	int n, alloc;
+	OFF_T *off, *len;
+};
+
 struct sum_struct {
 	OFF_T flength;		/**< total file length */
 	struct sum_buf *sums;	/**< points to info for each chunk */
@@ -1028,7 +1052,12 @@ struct sum_struct {
 	int32 blength;		/**< block_length */
 	int32 remainder;	/**< flength % block_length */
 	int s2length;		/**< sum2_length */
+	char era_state[ERA_STATE_LEN]; /**< --era request: the destination's ERA_XATTR */
+	struct era_ranges era_dest; /**< --era request: bytes the destination itself wrote */
 };
+
+/* An --era request is a sum head with blocks but no strong sums. */
+#define IS_ERA_REQUEST(s) (era_mode && (s)->count > 0 && (s)->s2length == 0)
 
 struct map_struct {
 	OFF_T file_size;	/* File size (from stat)		*/

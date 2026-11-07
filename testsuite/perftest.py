@@ -21,10 +21,10 @@ generator; it is deterministic for a given --seed.
 
 Examples:
     # Quick smoke run, same binary twice (means should match, no regression).
-    ./perftest.py --files 200 --total-size 5M -n 3 ./rsync ./rsync
+    ./perftest.py --files 200 --total-size 5M -n 3 ./rsync-era ./rsync-era
 
     # Compare a released binary against a fresh build over 8 loops.
-    ./perftest.py -n 8 ../old_versions/rsync_3.4.0 ./rsync
+    ./perftest.py -n 8 ../old_versions/rsync_3.4.0 ./rsync-era
 
     # Heavier tree, no-op (scan-overhead) timing only.
     ./perftest.py --files 50000 --total-size 2G --mode noop OLD/rsync NEW/rsync
